@@ -1,0 +1,197 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQG-Euler
+
+    </title>
+    <script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+    </script>
+    <script src="https://sagecell.sagemath.org/static/embedded_sagecell.js"></script>
+    <script>
+        $(function () {
+            // Make the div with id 'mycell' a Sage cell
+            sagecell.makeSagecell({inputLocation:  '#mycell',
+                                template:       sagecell.templates.minimal,
+                                evalButtonText: 'Activate'});
+            // Make *any* div with class 'compute' a Sage cell
+            sagecell.makeSagecell({inputLocation: 'div.compute',
+                            evalButtonText: 'Evaluate'});
+        });
+    </script>
+    <link rel="stylesheet" type="text/css" href="https://sagecell.sagemath.org/static/sagecell_embed.css">
+</head>
+<body style="font-family: 'Lato', sans-serif;">
+<h2 center="">Numerical Computations of 2D SQG-Euler Equations</h2>
+<p>by Ramjee Sharma</p>
+<p>We consider the model equation:
+    $$\theta_t+u\cdot \nabla \theta =0, \quad \quad \nabla \cdot u=0, \quad \theta(x,0)=\theta_0(x)$$
+    </p>
+    <p>
+        where \( \theta  = \theta (x_1, x_2, t) \) is a scalar representing the potential temperature and \( u = (u_1, u_2)\) is the velocity field determined from \(\theta \) by the stream function \( \psi \) with the auxiliary relations
+$$ (u_1, u_2) = (-\partial x_2 \psi, \partial x_1 \psi), \quad (-\Delta)^{1-\beta/2}\psi = \theta.$$
+    </p>
+<p>This following program numerically solve the model equations using the pseudospectral method. </p>
+
+
+<div class="compute">
+<script type="text/x-sage">
+#This program solves the 2d SQG-Euler Equations
+#$$theta_t+u\cdot \nabla \theta=0, \nabla \cdot u=0 $$
+#$$ (u_1, u_2) = (-\partial x_2 \psi, \partial x_1 \psi), \quad (-\Delta)^{1-\beta/2}\psi = \theta.$$
+#Codes written by Ramjee Sharma
+#All rights reserved
+#6/11/2022
+#Import Python libraries
+import numpy as np
+import matplotlib.pyplot as plt
+import scipy.stats as stats
+import timeit
+from numpy import linalg as LA #for matrix norm
+
+#start time
+start_time = timeit.default_timer()
+
+#Define global parameters
+beta=0.1
+nSteps=800
+dt=0.01
+
+#space discritization
+N=128
+x0=0.0
+xN=2*np.pi
+x=np.linspace(x0,xN,N, endpoint=False)
+y=np.linspace(x0,xN,N, endpoint=False)
+x1,x2=np.meshgrid(x,y)
+
+#Wave Numbers
+k=np.fft.fftfreq(int(N))*int(N)
+k1,k2=np.meshgrid(k,k)
+k11=np.sqrt(k1*k1+k2*k2)
+
+k11[0,0]=0.001 
+k=1./k11 #1/|k|
+k[0,0]=999
+
+#2/3 dealiasing
+myfilter=np.ones(N)
+for i in range(N):
+    if i>N/3-1 and i<5*N/6-2:
+        myfilter[i]=0
+
+myfilter1,myfilter2=np.meshgrid(myfilter,myfilter)
+myfilter=myfilter1*myfilter2
+
+#Initial data
+theta=np.sin(x1)*np.sin(x2)+np.cos(x2)
+
+#L2 Norm of the initial data
+print('L2 norm of initial data:',np.round(LA.norm(theta),6)) #L2 norm
+
+#L_infinity of initial data
+print('L_infinity norm of initial data:',np.round(LA.norm(theta, np.inf),6)) 
+
+#Fourier transform
+theta1=np.fft.fft2(theta)
+
+#Gradient of Theta
+def grad(theta):
+    theta1=np.fft.fft2(theta)
+    theta1x1=1j*k1*theta1
+    theta1x2=1j*k2*theta1
+    thetax1=np.real(np.fft.ifft2(theta1x1))
+    thetax2=np.real(np.fft.ifft2(theta1x2))
+    return np.sqrt(thetax1*thetax1+thetax2*thetax2)
+
+#L_infinity norm of gradient theta
+print('L_infinity norm of initial grad theta:',np.round(LA.norm(grad(theta), np.inf),6))
+
+#RK4 Routine,
+def rk4(x,dt):
+    k1=f(x)
+    k2=f(x+0.5*dt*k1)
+    k3=f(x+0.5*dt*k2)
+    k4=f(x+dt*k3)
+    x=x+(dt/6.0)*(k1+2.0*k2+2.0*k3+k4)#Time integration
+    return x
+
+#Forward Euler Routine
+def euler(x,dt):
+    return x+dt*f(x)
+
+# Right side function
+def f(f1):
+    f1=f1*myfilter
+    psi=np.power(k,beta-2)*f1
+    u1=(-1.0)*1.0j*k2*psi
+    v1=1.0j*k1*psi
+    u=np.real(np.fft.ifft2(u1)) 
+    v=np.real(np.fft.ifft2(v1))
+    f=np.real(np.fft.ifft2(f1)) 
+    uf=u*f
+    vf=v*f
+    uf1=np.fft.fft2(uf)*myfilter 
+    vf1=np.fft.fft2(vf)*myfilter 
+    return -(1.0j*k1*uf1+1.0j*k2*vf1)
+
+#Time integration Loop
+for i in range (nSteps):
+    thetafinal=np.real(np.fft.ifft2(theta1))#theta before possible blow up
+    #theta1=rk4(theta1,dt)#RK4
+    theta1=euler(theta1,dt)#Forward Euler
+    theta=np.real(np.fft.ifft2(theta1))
+    if np.isnan(np.max(np.max(theta))):
+        n=round(i*dt,6)
+        print('Singularity at t = '+str(n))
+        break
+
+#Calculating CPU run time for computation
+end_time = timeit.default_timer()
+print('Total CPU run Time: ', np.round(end_time - start_time,2),'seconds')
+
+#Calculating total time
+n=round(nSteps*dt,4)
+
+#Calculating L2 and L_infinity Norms
+print('t= '+str(n )+ ', L2 norm of final data: '+str(np.round(LA.norm(thetafinal),6))) #L2 norm
+print('t= '+str(n )+ ', L_infinity norm of final data: '+str(np.round(LA.norm(thetafinal, np.inf),6))) #Infinity Norm
+
+#max norm of gradient theta
+print('t= '+str(n )+ ', L_infinity norm of final grad theta: '+str(np.round(LA.norm(grad(thetafinal), np.inf),6)))
+
+#Plotting contour plot of final theta
+plt.contour(x1,x2,thetafinal,30)
+plt.colorbar()
+plt.title('Contours of theta, beta = '+str(round(beta,4)) + ',  t= '+str(n ))
+
+plt.show()
+
+#Plottinng Power Spectrum 
+nx = thetafinal.shape[0]
+theta1 = np.fft.fftn(thetafinal)
+amplitudes = np.abs(theta1)**2
+k = np.fft.fftfreq(nx) * nx
+k1,k2 = np.meshgrid(k, k)
+knrm = np.sqrt(k1**2 + k2**2)
+knrm = knrm.flatten()
+amplitudes = amplitudes.flatten()
+kbins = np.arange(0.5, nx//2+1, 1.)
+kvals = 0.5 * (kbins[1:] + kbins[:-1])
+Abins, _, _ = stats.binned_statistic(knrm, amplitudes,
+                                        statistic = "mean",
+                                        bins = kbins)
+Abins *= np.pi * (kbins[1:]**2 - kbins[:-1]**2)
+plt.loglog(kvals, Abins)
+plt.xlabel("$k$")
+plt.ylabel("$P(k)$")
+plt.title('Power spectrum, beta = '+str(round(beta,4)) + ',  t= '+str(n ))
+plt.show()
+</script>
+</div>
+<p>The result will be displayed above.</p>
+</body>
+</html>
